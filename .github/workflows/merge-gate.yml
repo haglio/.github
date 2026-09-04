@@ -1,0 +1,132 @@
+# The family's merge gate, called by every repo's own merge-gate.yml with a `uses:`
+# block. One clock, one checkout layout, one install order, one suite command, and the
+# actions pinned by commit; a repo says only what differs about it.
+name: merge gate (full suite)
+
+on:
+  workflow_call:
+    inputs:
+      siblings:
+        description: The repos cloned beside this one and installed editable first, in order.
+        type: string
+        default: app_support
+      python-version:
+        type: string
+        default: "3.12"
+      extras:
+        description: The pip extras of the repo itself.
+        type: string
+        default: dev
+      timeout-minutes:
+        type: number
+        default: 5
+      qt-platform:
+        description: QT_QPA_PLATFORM for the suite, or empty for none.
+        type: string
+        default: ""
+      sdl-video:
+        description: SDL_VIDEODRIVER for the suite, or empty for none.
+        type: string
+        default: ""
+      sdl-audio:
+        description: SDL_AUDIODRIVER for the suite, or empty for none.
+        type: string
+        default: ""
+      pip-extra:
+        description: Packages installed before the repo, beyond its own dependencies.
+        type: string
+        default: ""
+      prepare:
+        description: A bash script run in the repo after the install and before the suite.
+        type: string
+        default: ""
+      cache-path:
+        description: A path under the repo restored from the cache before `prepare` and saved after.
+        type: string
+        default: ""
+      cache-key:
+        type: string
+        default: ""
+      reverse:
+        description: Run the suite a second time, collected back to front.
+        type: boolean
+        default: true
+      reverse-on-pull-request:
+        description: Run the back-to-front leg on pull requests too, not only in the queue and on main.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  suite:
+    runs-on: windows-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Check out ${{ github.event.repository.name }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ github.event.repository.name }}
+
+      - name: Clone the siblings beside it
+        if: inputs.siblings != ''
+        run: |
+          set -euo pipefail
+          for repo in ${{ inputs.siblings }}; do
+            git clone --quiet --depth 1 "https://github.com/haglio/$repo.git" "$repo"
+          done
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+          cache-dependency-path: "**/pyproject.toml"
+
+      - name: Say how the suite renders
+        run: |
+          set -euo pipefail
+          [ -n "${{ inputs.qt-platform }}" ] && echo "QT_QPA_PLATFORM=${{ inputs.qt-platform }}" >> "$GITHUB_ENV"
+          [ -n "${{ inputs.sdl-video }}" ] && echo "SDL_VIDEODRIVER=${{ inputs.sdl-video }}" >> "$GITHUB_ENV"
+          [ -n "${{ inputs.sdl-audio }}" ] && echo "SDL_AUDIODRIVER=${{ inputs.sdl-audio }}" >> "$GITHUB_ENV"
+          true
+
+      - name: Install the siblings, then the repo (editable, compat mode)
+        working-directory: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -n "${{ inputs.pip-extra }}" ]; then pip install ${{ inputs.pip-extra }}; fi
+          for repo in ${{ inputs.siblings }}; do
+            pip install -e "../$repo" --config-settings editable_mode=compat
+          done
+          pip install -e ".[${{ inputs.extras }}]" --config-settings editable_mode=compat
+
+      - name: Restore what the repo caches
+        if: inputs.cache-path != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.event.repository.name }}/${{ inputs.cache-path }}
+          key: ${{ inputs.cache-key }}-${{ runner.os }}
+
+      - name: Prepare what the suite needs beyond pip
+        if: inputs.prepare != ''
+        working-directory: ${{ github.event.repository.name }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ${{ inputs.prepare }}
+
+      - name: Run the suite
+        working-directory: ${{ github.event.repository.name }}
+        run: python -m pytest -q
+
+      - name: Run the suite back to front
+        if: inputs.reverse && (inputs.reverse-on-pull-request || github.event_name != 'pull_request')
+        working-directory: ${{ github.event.repository.name }}
+        env:
+          TEST_COLLECTION_ORDER: reverse
+        run: python -m pytest -q
