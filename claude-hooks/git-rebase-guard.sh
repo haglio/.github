@@ -32,7 +32,7 @@ norm=$(printf '%s' "$cmd" | tr '\n' ' ')
 
 # --- non-fast-forward merge to sync ---------------------------------------------------------
 # (exclude `git merge-base`, where \bmerge\b matches the "merge" before the hyphen)
-if printf '%s' "$norm" | grep -Eq '\bgit\b[^|;&]*\bmerge\b' \
+if printf '%s' "$norm" | grep -Eq '\bgit(\s+-[cC]\s+\S+)*\s+merge\b' \
    && ! printf '%s' "$norm" | grep -Eq 'merge-base' \
    && ! printf '%s' "$norm" | grep -Eq '\bmerge\b[^|;&]*--(ff-only|abort|continue|quit)\b'; then
   exit_block "non-fast-forward 'git merge' (merging to sync). Rebase onto main instead."
@@ -40,7 +40,7 @@ fi
 
 # --- reset --hard/--soft onto a branch (the reset-to-dig-out / reset-to-main move) -----------
 # Exclude the documented squash form, which mentions main only inside merge-base.
-if printf '%s' "$norm" | grep -Eq '\bgit\b[^|;&]*\breset\b[^|;&]*--(hard|soft)\b[^|;&]*\b(main|origin/main|origin/HEAD)\b' \
+if printf '%s' "$norm" | grep -Eq '\bgit(\s+-[cC]\s+\S+)*\s+reset\b[^|;&]*--(hard|soft)\b[^|;&]*\b(main|origin/main|origin/HEAD)\b' \
    && ! printf '%s' "$norm" | grep -Eq 'merge-base'; then
   exit_block "'git reset --hard/--soft main' reverts teammates' commits and is the reset-to-dig-out move. Rebase instead."
 fi
