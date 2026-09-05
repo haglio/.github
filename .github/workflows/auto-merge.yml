@@ -1,0 +1,34 @@
+# Arms auto-merge on a pull request the moment it opens, so the queue lands it hands-off
+# once the gate is green. Called by every repo's own auto-merge.yml with a `uses:` block.
+# GITHUB_TOKEN cannot do this -- a queue entry it creates never fires the merge_group
+# check -- so a token is minted from the auto-merge App, whose secrets are the org's.
+name: auto-arm auto-merge
+
+on:
+  workflow_call:
+    secrets:
+      AUTOMERGE_APP_ID:
+        required: true
+      AUTOMERGE_APP_KEY:
+        required: true
+
+permissions: {}
+
+jobs:
+  arm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mint a token from the auto-merge App
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.AUTOMERGE_APP_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_KEY }}
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh pr merge "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" --auto \
+            || echo "::warning::Could not enable auto-merge -- is 'Allow auto-merge' on and the App installed?"
