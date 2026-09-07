@@ -10,6 +10,13 @@ on:
         description: The repos cloned beside this one and installed editable first, in order.
         type: string
         default: app_support
+      checkouts:
+        description: >-
+          Repos cloned beside this one and NOT installed: trees a test reads as
+          source. A gate that holds a package against the repos importing it has
+          to see them, and a clone with nothing beside it can only skip.
+        type: string
+        default: ""
       python-version:
         type: string
         default: "3.12"
@@ -73,11 +80,11 @@ jobs:
         with:
           path: ${{ github.event.repository.name }}
 
-      - name: Clone the siblings beside it
-        if: inputs.siblings != ''
+      - name: Clone what sits beside it
+        if: inputs.siblings != '' || inputs.checkouts != ''
         run: |
           set -euo pipefail
-          for repo in ${{ inputs.siblings }}; do
+          for repo in ${{ inputs.siblings }} ${{ inputs.checkouts }}; do
             git clone --quiet --depth 1 "https://github.com/haglio/$repo.git" "$repo"
           done
 
