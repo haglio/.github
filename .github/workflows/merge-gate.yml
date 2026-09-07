@@ -6,8 +6,21 @@ name: merge gate (full suite)
 on:
   workflow_call:
     inputs:
+      repo:
+        description: >-
+          A consumer whose suite runs instead of this repository's, cloned at its default
+          branch, with this repository installed into it from the pull request. That is
+          the reverse gate a shared library has no other way to get: without it a change
+          to a library merges green on its own suite and turns a consumer red at an
+          arbitrary later time, with no cause in that consumer's own history. Empty for
+          the ordinary case, where the repository being changed is the one under test.
+        type: string
+        default: ""
       siblings:
-        description: The repos cloned beside this one and installed editable first, in order.
+        description: >-
+          The repos cloned beside the one under test and installed editable first, in
+          order -- never this repository, whose pull-request checkout is the copy of it
+          that has to be tested.
         type: string
         default: app_support
       python-version:
@@ -67,11 +80,19 @@ jobs:
   suite:
     runs-on: windows-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      # The repo whose suite runs: this one, or the consumer it is being tested through.
+      TARGET: ${{ inputs.repo != '' && inputs.repo || github.event.repository.name }}
+      CANDIDATE: ${{ github.event.repository.name }}
     steps:
       - name: Check out ${{ github.event.repository.name }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: ${{ github.event.repository.name }}
+
+      - name: Clone the consumer whose suite runs
+        if: inputs.repo != ''
+        run: git clone --quiet --depth 1 "https://github.com/haglio/${{ inputs.repo }}.git" "${{ inputs.repo }}"
 
       - name: Clone the siblings beside it
         if: inputs.siblings != ''
@@ -96,37 +117,41 @@ jobs:
           true
 
       - name: Install the siblings, then the repo (editable, compat mode)
-        working-directory: ${{ github.event.repository.name }}
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           if [ -n "${{ inputs.pip-extra }}" ]; then pip install ${{ inputs.pip-extra }}; fi
           for repo in ${{ inputs.siblings }}; do
-            pip install -e "../$repo" --config-settings editable_mode=compat
+            pip install -e "./$repo" --config-settings editable_mode=compat
           done
-          pip install -e ".[${{ inputs.extras }}]" --config-settings editable_mode=compat
+          if [ "$TARGET" = "$CANDIDATE" ]; then
+            pip install -e "./$CANDIDATE[${{ inputs.extras }}]" --config-settings editable_mode=compat
+          else
+            pip install -e "./$CANDIDATE" --config-settings editable_mode=compat
+            pip install -e "./$TARGET[${{ inputs.extras }}]" --config-settings editable_mode=compat
+          fi
 
       - name: Restore what the repo caches
         if: inputs.cache-path != ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ github.event.repository.name }}/${{ inputs.cache-path }}
+          path: ${{ env.TARGET }}/${{ inputs.cache-path }}
           key: ${{ inputs.cache-key }}-${{ runner.os }}
 
       - name: Prepare what the suite needs beyond pip
         if: inputs.prepare != ''
-        working-directory: ${{ github.event.repository.name }}
+        working-directory: ${{ env.TARGET }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: ${{ inputs.prepare }}
 
       - name: Run the suite
-        working-directory: ${{ github.event.repository.name }}
+        working-directory: ${{ env.TARGET }}
         run: python -m pytest -q
 
       - name: Run the suite back to front
         if: inputs.reverse && (inputs.reverse-on-pull-request || github.event_name != 'pull_request')
-        working-directory: ${{ github.event.repository.name }}
+        working-directory: ${{ env.TARGET }}
         env:
           TEST_COLLECTION_ORDER: reverse
         run: python -m pytest -q
