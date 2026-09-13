@@ -61,11 +61,11 @@ on:
         type: string
         default: ""
       reverse:
-        description: Run the suite a second time, collected back to front.
+        description: Not read any more -- the suite runs once, in a random order. Removed once no caller passes it.
         type: boolean
         default: true
       reverse-on-pull-request:
-        description: Run the back-to-front leg on pull requests too, not only in the queue and on main.
+        description: Not read any more -- the suite runs once, in a random order. Removed once no caller passes it.
         type: boolean
         default: true
 
@@ -131,6 +131,9 @@ jobs:
             pip install -e "./$TARGET[${{ inputs.extras }}]" --config-settings editable_mode=compat
           fi
 
+      - name: Install the plugin that shuffles the suite
+        run: pip install pytest-random-order==1.2.0
+
       - name: Restore what the repo caches
         if: inputs.cache-path != ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -145,13 +148,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ${{ inputs.prepare }}
 
-      - name: Run the suite
-        working-directory: ${{ env.TARGET }}
-        run: python -m pytest -q
-
-      - name: Run the suite back to front
-        if: inputs.reverse && (inputs.reverse-on-pull-request || github.event_name != 'pull_request')
+      - name: Run the suite in a random order
         working-directory: ${{ env.TARGET }}
         env:
-          TEST_COLLECTION_ORDER: reverse
-        run: python -m pytest -q
+          SEED: ${{ github.run_id }}
+        run: |
+          echo "Shuffled with seed $SEED. To run the suite in this order: pip install pytest-random-order==1.2.0, then python -m pytest --random-order-seed=$SEED"
+          python -m pytest -q --random-order-seed="$SEED"
