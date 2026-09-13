@@ -60,14 +60,6 @@ on:
       cache-key:
         type: string
         default: ""
-      reverse:
-        description: Not read any more -- the suite runs once, in a random order. Removed once no caller passes it.
-        type: boolean
-        default: true
-      reverse-on-pull-request:
-        description: Not read any more -- the suite runs once, in a random order. Removed once no caller passes it.
-        type: boolean
-        default: true
 
 permissions:
   contents: read
