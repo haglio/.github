@@ -81,6 +81,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: ${{ github.event.repository.name }}
+          # The whole history, so the extra runs can find where the pull request left main.
+          fetch-depth: 0
 
       - name: Clone the consumer whose suite runs
         if: inputs.repo != ''
@@ -151,3 +153,21 @@ jobs:
         run: |
           echo "Shuffled with seed $SEED. To run the suite in this order: pip install pytest-random-order==1.2.0, then python -m pytest --random-order-seed=$SEED"
           python -m pytest -q --random-order-seed="$SEED"
+
+      # A test that fails once in ten runs is flaky, and it is turned away here, by the
+      # session that wrote it, instead of turning up red in someone else's run. The gate
+      # has a venv of its own, so the tests still run against the packages this repo pins,
+      # and it repeats only what the suite above collects.
+      - name: Run the new and changed tests ten more times
+        if: inputs.repo == '' && github.event_name != 'push'
+        working-directory: ${{ env.TARGET }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.146
+        run: |
+          set -euo pipefail
+          suite_python="$(python -c 'import sys; print(sys.executable)')"
+          python -m venv "$RUNNER_TEMP/flake-gate"
+          gate="$RUNNER_TEMP/flake-gate/Scripts/python.exe"
+          "$gate" -m pip install --quiet "$GATE"
+          "$gate" -m app_support.flake_gate --base "$BASE" --python "$suite_python" --dedicated-machine

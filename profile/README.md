@@ -10,3 +10,8 @@ consumer>`, it clones that consumer at its default branch, installs the pull req
 into it, and runs *the consumer's* suite -- so `app_support`, `shared_ui` and `player_core` cannot
 merge a change no consumer has built against. Those repos require a second check for it
 (`consumer / suite`) alongside their own.
+
+On a pull request and in the merge queue, the gate then runs every test the change added or changed
+ten more times, on a runner kept busy, and fails the check if any run fails
+(`python -m app_support.flake_gate`). It repeats only what the repo's suite collects, so a tree the
+suite leaves out, such as `fun_time`'s hidden-desktop tests, is left out here too.
