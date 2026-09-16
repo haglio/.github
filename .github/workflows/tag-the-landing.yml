@@ -1,0 +1,43 @@
+# Tags every landing on main, so a consumer can name the copy of a shared package it
+# was built against. Called by a shared repo's own merge-gate.yml on `push` to main.
+#
+# The tag IS the version: those repos read theirs with setuptools-scm, which takes it
+# from `git describe`, so `pip install "<name> @ git+<repo>@<tag>"` reports that tag
+# and a pin cannot disagree with what it installs. The number is the count of commits
+# on main -- it needs no state anywhere, it can only go up, and nothing in a pull
+# request has to remember to bump it.
+name: tag the landing
+
+on:
+  workflow_call:
+    inputs:
+      series:
+        description: The version series the commit count is appended to.
+        type: string
+        default: "0.1"
+
+permissions: {}
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the landing, with the history the count is taken from
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Tag it
+        run: |
+          set -euo pipefail
+          tag="v${{ inputs.series }}.$(git rev-list --count HEAD)"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::notice::$tag is already here; nothing to do"
+            exit 0
+          fi
+          git tag "$tag"
+          git push origin "$tag"
+          echo "::notice::tagged $tag"
