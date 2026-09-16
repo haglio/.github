@@ -1,0 +1,16 @@
+# Arms auto-merge the moment a pull request here opens, as every other repo's own
+# auto-merge.yml does, so a change to the shared workflows lands hands-off once the
+# check passes. The arm itself is auto-merge.yml beside this file.
+name: arm auto-merge
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+
+permissions: {}
+
+jobs:
+  arm:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/auto-merge.yml
+    secrets: inherit
