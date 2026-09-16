@@ -24,8 +24,11 @@ on:
         type: string
         default: app_support
       python-version:
+        description: >-
+          The Python the suite runs on. Every caller names it, so no repo can fall back
+          to a version the family's machine does not run.
         type: string
-        default: "3.12"
+        required: true
       extras:
         description: The pip extras of the repo itself.
         type: string
