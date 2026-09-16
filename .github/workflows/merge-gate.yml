@@ -119,8 +119,12 @@ jobs:
           if [ "$TARGET" = "$CANDIDATE" ]; then
             pip install -e "./$CANDIDATE[${{ inputs.extras }}]" --config-settings editable_mode=compat
           else
-            pip install -e "./$CANDIDATE" --config-settings editable_mode=compat
+            # The consumer first, the candidate last. A consumer that pins this
+            # repo at a tag would otherwise replace the candidate with that tag
+            # as it installed, and its suite would pass against the copy it
+            # already had -- a reverse gate that can no longer fail.
             pip install -e "./$TARGET[${{ inputs.extras }}]" --config-settings editable_mode=compat
+            pip install -e "./$CANDIDATE" --config-settings editable_mode=compat
           fi
 
       - name: Install the plugin that shuffles the suite
