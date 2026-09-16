@@ -15,3 +15,6 @@ On a pull request and in the merge queue, the gate then runs every test the chan
 ten more times, on a runner kept busy, and fails the check if any run fails
 (`python -m app_support.flake_gate`). It repeats only what the repo's suite collects, so a tree the
 suite leaves out, such as `fun_time`'s hidden-desktop tests, is left out here too.
+
+Changes to this repository land the way every other repo's do: a pull request is queued the moment it
+opens (unless it is a draft) and merges once `actionlint` has read every workflow here without an error.
