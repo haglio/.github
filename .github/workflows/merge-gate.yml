@@ -166,7 +166,7 @@ jobs:
         working-directory: ${{ env.TARGET }}
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.146
+          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.149
         run: |
           set -euo pipefail
           suite_python="$(python -c 'import sys; print(sys.executable)')"
