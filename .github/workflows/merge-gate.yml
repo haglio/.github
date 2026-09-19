@@ -171,7 +171,7 @@ jobs:
         working-directory: ${{ env.TARGET }}
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.161
+          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.165
           CEILING: ${{ inputs.timeout-minutes }}
         run: |
           set -euo pipefail
