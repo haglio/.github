@@ -80,6 +80,11 @@ jobs:
       TARGET: ${{ inputs.repo != '' && inputs.repo || github.event.repository.name }}
       CANDIDATE: ${{ github.event.repository.name }}
     steps:
+      # Read back by the repeat step below, which has no other way to ask how much
+      # of the job's clock is left.
+      - name: Start this job's clock
+        run: echo "JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out ${{ github.event.repository.name }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -166,11 +171,27 @@ jobs:
         working-directory: ${{ env.TARGET }}
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.150
+          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.161
+          CEILING: ${{ inputs.timeout-minutes }}
         run: |
           set -euo pipefail
           suite_python="$(python -c 'import sys; print(sys.executable)')"
           python -m venv "$RUNNER_TEMP/flake-gate"
           gate="$RUNNER_TEMP/flake-gate/Scripts/python.exe"
           "$gate" -m pip install --quiet "$GATE"
-          "$gate" -m app_support.flake_gate --base "$BASE" --python "$suite_python" --dedicated-machine
+          # What is left of the job's clock, less a minute for the steps after this
+          # one. Running past that clock cancels the job, and a cancelled job reports
+          # nothing at all -- no pass, no fail, no list of what it got through -- and
+          # turns away a branch nothing was failing on. Told what it has, the gate
+          # repeats what fits and names the rest.
+          budget="$(python -c "
+          import os, time
+          left = float(os.environ['CEILING']) * 60 - (time.time() - float(os.environ['JOB_STARTED'])) - 60
+          print(f'{left / 60:.2f}' if left >= 30 else '')
+          ")"
+          if [ -z "$budget" ]; then
+            echo "nothing left of the ${CEILING}-minute ceiling to repeat anything in"
+            exit 0
+          fi
+          "$gate" -m app_support.flake_gate --base "$BASE" --python "$suite_python" \
+            --dedicated-machine --budget-minutes "$budget"
