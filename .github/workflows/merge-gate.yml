@@ -16,6 +16,17 @@ on:
           the ordinary case, where the repository being changed is the one under test.
         type: string
         default: ""
+      imports-only:
+        description: >-
+          With `repo`, import every module of the packages the consumer ships, against this
+          repository's pull request, in place of running the consumer's suite: what keeps a
+          release here from leaving an app unable to start, for the price of an install,
+          where the app's whole suite is too slow to run on every pull request here. On
+          2026-10-14 a funestra release dropped two entries of a table Fun Time built its
+          commands from as it imported, and production Fun Time would not start; the only
+          consumer funestra's gate ran then was one whose repo held no code at all.
+        type: boolean
+        default: false
       siblings:
         description: >-
           The repos cloned beside the one under test and installed editable first, in
@@ -155,12 +166,29 @@ jobs:
         run: ${{ inputs.prepare }}
 
       - name: Run the suite in a random order
+        if: ${{ !inputs.imports-only }}
         working-directory: ${{ env.TARGET }}
         env:
           SEED: ${{ github.run_id }}
         run: |
           echo "Shuffled with seed $SEED. To run the suite in this order: pip install pytest-random-order==1.2.0, then python -m pytest --random-order-seed=$SEED"
           python -m pytest -q --random-order-seed="$SEED"
+
+      # From an installation of its own, as the repeats below are, so the sweep doing the
+      # importing is the version named here, whatever app_support the consumer and this
+      # repository pin.
+      - name: Import every module the consumer ships
+        if: inputs.imports-only
+        working-directory: ${{ env.TARGET }}
+        env:
+          SWEEP: app-support @ git+https://github.com/haglio/app_support@v0.1.243
+        run: |
+          set -euo pipefail
+          suite_python="$(python -c 'import sys; print(sys.executable)')"
+          python -m venv "$RUNNER_TEMP/import-sweep"
+          sweep="$RUNNER_TEMP/import-sweep/Scripts/python.exe"
+          "$sweep" -m pip install --quiet "$SWEEP"
+          "$sweep" -m app_support.import_sweep --python "$suite_python" .
 
       # A test that fails once in ten runs is flaky, and it is turned away here, by the
       # session that wrote it, instead of turning up red in someone else's run. The gate
