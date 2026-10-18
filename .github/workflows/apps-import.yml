@@ -1,0 +1,41 @@
+# The apps that run the family's libraries, each installed at its own pins with the
+# calling library's pull request over them, and every module they ship imported. A
+# library's merge gate calls this with one `uses:` block, so the list of apps and how
+# each one installs is kept here once, however many libraries hold themselves to it.
+#
+# Their whole suites take minutes to the better part of an hour, too long to run on
+# every pull request of every library, and an import is where a release that takes
+# away what an app still uses shows first: on 2026-10-14 funestra v0.1.507 dropped two
+# entries of a table Fun Time built its commands from as it imported, and production
+# Fun Time would not start.
+name: the apps import every module
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  fun-time:
+    uses: haglio/.github/.github/workflows/merge-gate.yml@main
+    with:
+      repo: fun_time
+      imports-only: true
+      siblings: ""
+      python-version: "3.14"
+      timeout-minutes: 15
+      extras: "dev,windows"
+      qt-platform: offscreen
+      sdl-video: dummy
+      sdl-audio: dummy
+
+  origenerator:
+    uses: haglio/.github/.github/workflows/merge-gate.yml@main
+    with:
+      repo: origenerator
+      imports-only: true
+      siblings: ""
+      python-version: "3.14"
+      timeout-minutes: 15
+      qt-platform: offscreen
