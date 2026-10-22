@@ -47,6 +47,18 @@ on:
       timeout-minutes:
         type: number
         default: 5
+      parts:
+        description: >-
+          How many parts the repository's own suite runs in, side by side, each in a job
+          of its own on this clock: for a suite that has outgrown one job's. Every part
+          collects the whole suite and runs the share the run's seed deals it, so the
+          parts run each test once between them and a test meets different neighbors
+          from run to run. The first part also repeats the new and changed tests, and a
+          last job gives the verdict under the name the queue requires: every part
+          passed, and the coverage floor holds over their measurements together. At
+          most 8.
+        type: number
+        default: 1
       qt-platform:
         description: QT_QPA_PLATFORM for the suite, or empty for none.
         type: string
@@ -83,9 +95,19 @@ defaults:
     shell: bash
 
 jobs:
+  # The whole suite, under the name the merge queue requires -- or with `parts`, one part
+  # of it, and the verdict below takes that name.
   suite:
+    name: ${{ inputs.parts > 1 && format('part {0} of {1}', matrix.part, inputs.parts) || 'suite' }}
     runs-on: windows-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    strategy:
+      # Every part runs to its end, as the whole suite does, so a run names all of its
+      # failing tests rather than one part's.
+      fail-fast: false
+      matrix:
+        # Looked up by the number of parts: GitHub's expressions cannot count.
+        part: ${{ fromJSON('[[], [1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6, 7, 8]]')[inputs.parts] }}
     env:
       # The repo whose suite runs: this one, or the consumer it is being tested through.
       TARGET: ${{ inputs.repo != '' && inputs.repo || github.event.repository.name }}
@@ -151,6 +173,10 @@ jobs:
       - name: Install the plugin that shuffles the suite
         run: pip install pytest-random-order==1.2.0
 
+      - name: Install the plugin that deals the suite into parts
+        if: inputs.parts > 1
+        run: pip install pytest-test-groups==1.2.1
+
       - name: Restore what the repo caches
         if: inputs.cache-path != ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -166,13 +192,41 @@ jobs:
         run: ${{ inputs.prepare }}
 
       - name: Run the suite in a random order
-        if: ${{ !inputs.imports-only }}
+        if: ${{ !inputs.imports-only && inputs.parts == 1 }}
         working-directory: ${{ env.TARGET }}
         env:
           SEED: ${{ github.run_id }}
         run: |
           echo "Shuffled with seed $SEED. To run the suite in this order: pip install pytest-random-order==1.2.0, then python -m pytest --random-order-seed=$SEED"
           python -m pytest -q --random-order-seed="$SEED"
+
+      # A part measures only the code its own share of the tests reaches, so it holds no
+      # floor of its own: the verdict holds the repo's over every part's measurements.
+      - name: Run part ${{ matrix.part }} of the suite in a random order
+        if: inputs.parts > 1
+        working-directory: ${{ env.TARGET }}
+        env:
+          SEED: ${{ github.run_id }}
+          PART: ${{ matrix.part }}
+          PARTS: ${{ inputs.parts }}
+        run: |
+          set -euo pipefail
+          dealt="--test-group-count=$PARTS --test-group=$PART --test-group-random-seed=$SEED"
+          echo "Part $PART of $PARTS, dealt and shuffled with seed $SEED. To run it in this order: pip install pytest-random-order==1.2.0 pytest-test-groups==1.2.1, then python -m pytest --random-order-seed=$SEED $dealt --cov-fail-under=0"
+          python -m pytest -q --random-order-seed="$SEED" $dealt --cov-fail-under=0
+          # Out of the checkout before the repeats below, whose own runs measure over it.
+          mv .coverage "$RUNNER_TEMP/coverage.part-$PART"
+
+      - name: Keep this part's measurements for the verdict
+        if: inputs.parts > 1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-part-${{ matrix.part }}
+          path: ${{ runner.temp }}/coverage.part-${{ matrix.part }}
+          if-no-files-found: error
+          retention-days: 1
+          # A run attempted again keeps the artifacts of the attempt before it.
+          overwrite: true
 
       # From an installation of its own, as the repeats below are, so the sweep doing the
       # importing is the version named here, whatever app_support the consumer and this
@@ -193,9 +247,10 @@ jobs:
       # A test that fails once in ten runs is flaky, and it is turned away here, by the
       # session that wrote it, instead of turning up red in someone else's run. The gate
       # has a venv of its own, so the tests still run against the packages this repo pins,
-      # and it repeats only what the suite above collects.
+      # and it repeats only what the suite above collects. A suite run in parts has its
+      # first part repeat them, once.
       - name: Run the new and changed tests ten more times
-        if: inputs.repo == '' && github.event_name != 'push'
+        if: inputs.repo == '' && github.event_name != 'push' && matrix.part == 1
         working-directory: ${{ env.TARGET }}
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
@@ -223,3 +278,51 @@ jobs:
           fi
           "$gate" -m app_support.flake_gate --base "$BASE" --python "$suite_python" \
             --dedicated-machine --budget-minutes "$budget"
+
+  # With `parts`, the check the merge queue requires. It runs however the parts ended,
+  # since a job skipped here would count as passed, and fails unless every part passed
+  # and the coverage floor holds over all of their measurements together.
+  verdict:
+    name: ${{ inputs.parts > 1 && 'suite' || 'verdict' }}
+    needs: suite
+    if: always() && inputs.parts > 1
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Every part of the suite passed
+        env:
+          RESULT: ${{ needs.suite.result }}
+        run: |
+          if [ "$RESULT" != success ]; then
+            echo "a part of the suite came to $RESULT; its own job names the tests"
+            exit 1
+          fi
+
+      - name: Check out ${{ github.event.repository.name }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ github.event.repository.name }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Gather every part's measurements
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-part-*
+          path: ${{ runner.temp }}/coverage
+          merge-multiple: true
+
+      - name: Hold the coverage floor over every part together
+        working-directory: ${{ github.event.repository.name }}
+        env:
+          PARTS: ${{ inputs.parts }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet "coverage[toml]"
+          measured=()
+          for part in $(seq "$PARTS"); do measured+=("$RUNNER_TEMP/coverage/coverage.part-$part"); done
+          python -m coverage combine "${measured[@]}"
+          echo "Coverage over every part, held to this repository's floor:"
+          python -m coverage report --format=total
