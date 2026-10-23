@@ -53,10 +53,10 @@ on:
           of its own on this clock: for a suite that has outgrown one job's. Every part
           collects the whole suite and runs the share the run's seed deals it, so the
           parts run each test once between them and a test meets different neighbors
-          from run to run. The first part also repeats the new and changed tests, and a
-          last job gives the verdict under the name the queue requires: every part
-          passed, and the coverage floor holds over their measurements together. At
-          most 8.
+          from run to run. Every part also repeats its share of the new and changed
+          tests, on what is left of its own clock, and a last job gives the verdict
+          under the name the queue requires: every part passed, and the coverage floor
+          holds over their measurements together. At most 8.
         type: number
         default: 1
       qt-platform:
@@ -247,15 +247,18 @@ jobs:
       # A test that fails once in ten runs is flaky, and it is turned away here, by the
       # session that wrote it, instead of turning up red in someone else's run. The gate
       # has a venv of its own, so the tests still run against the packages this repo pins,
-      # and it repeats only what the suite above collects. A suite run in parts has its
-      # first part repeat them, once.
+      # and it repeats only what the suite above collects. A suite run in parts deals
+      # them out, so each part repeats its share and the parts repeat each one between
+      # them.
       - name: Run the new and changed tests ten more times
-        if: inputs.repo == '' && github.event_name != 'push' && matrix.part == 1
+        if: inputs.repo == '' && github.event_name != 'push'
         working-directory: ${{ env.TARGET }}
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.183
+          GATE: app-support @ git+https://github.com/haglio/app_support@v0.1.260
           CEILING: ${{ inputs.timeout-minutes }}
+          PART: ${{ matrix.part }}
+          PARTS: ${{ inputs.parts }}
         run: |
           set -euo pipefail
           suite_python="$(python -c 'import sys; print(sys.executable)')"
@@ -277,7 +280,7 @@ jobs:
             exit 0
           fi
           "$gate" -m app_support.flake_gate --base "$BASE" --python "$suite_python" \
-            --dedicated-machine --budget-minutes "$budget"
+            --dedicated-machine --budget-minutes "$budget" --part "$PART" --parts "$PARTS"
 
   # With `parts`, the check the merge queue requires. It runs however the parts ended,
   # since a job skipped here would count as passed, and fails unless every part passed
