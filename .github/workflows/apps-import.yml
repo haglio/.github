@@ -1,14 +1,18 @@
 # The apps that run the family's libraries, each installed at its own pins with the
-# calling library's pull request over them, and every module they ship imported. A
-# library's merge gate calls this with one `uses:` block, so the list of apps and how
-# each one installs is kept here once, however many libraries hold themselves to it.
+# calling library's pull request over them, every module they ship imported and then
+# their whole suites run. A library's merge gate calls this with one `uses:` block, so
+# the list of apps is kept here once, however many libraries hold themselves to it, and
+# how each app's suite runs is read from that app's own merge gate, so that is said once
+# too.
 #
-# Their whole suites take minutes to the better part of an hour, too long to run on
-# every pull request of every library, and an import is where a release that takes
-# away what an app still uses shows first: on 2026-10-14 funestra v0.1.507 dropped two
-# entries of a table Fun Time built its commands from as it imported, and production
-# Fun Time would not start.
-name: the apps import every module
+# Until 2026-10-24 this held the apps to importing alone. funestra#263 changed what a
+# Funestra asks of the engines the apps hand it, so each app's tests had to change before
+# the app could take a later release: Fun Time's did about 30 hours on, Origenerator's
+# never shipped beside it, and for about two days no funestra release after it, nor any
+# release of the other libraries that needed one, could reach Origenerator, while every
+# module still imported and nothing said so. Run here, the apps' suites refuse such a
+# change before it ships.
+name: the apps import every module and pass their suites
 
 on:
   workflow_call:
@@ -17,25 +21,92 @@ permissions:
   contents: read
 
 jobs:
-  fun-time:
-    uses: haglio/.github/.github/workflows/merge-gate.yml@main
-    with:
-      repo: fun_time
-      imports-only: true
-      siblings: ""
-      python-version: "3.14"
-      timeout-minutes: 15
-      extras: "dev,windows"
-      qt-platform: offscreen
-      sdl-video: dummy
-      sdl-audio: dummy
+  # Each app's suite as its own merge gate runs it -- its clock, its parts, its extras,
+  # what it prepares beyond pip -- over the family gate's defaults. A main that is pushed
+  # already passed both in its merge queue.
+  settings:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      apps: ${{ steps.read.outputs.apps }}
+    steps:
+      - name: Read each app's suite from its own merge gate
+        id: read
+        env:
+          APPS: fun_time origenerator
+          GH_TOKEN: ${{ github.token }}
+          READ: |
+            import base64
+            import json
+            import os
+            import subprocess
+            import sys
 
-  origenerator:
+            import yaml
+
+            FAMILY_GATE = "haglio/.github/.github/workflows/merge-gate.yml@"
+            # GitHub reads the two together anywhere in a workflow file as an expression of its own.
+            EXPRESSION = "$" "{{"
+
+
+            def workflow(repo, name):
+                content = subprocess.run(
+                    ["gh", "api", f"repos/haglio/{repo}/contents/.github/workflows/{name}", "--jq", ".content"],
+                    check=True, capture_output=True, text=True).stdout
+                return yaml.safe_load(base64.b64decode(content))
+
+
+            def own_suite(app):
+                jobs = [job.get("with") or {} for job in workflow(app, "merge-gate.yml")["jobs"].values()
+                        if str(job.get("uses", "")).startswith(FAMILY_GATE)
+                        and not (job.get("with") or {}).get("repo")]
+                if len(jobs) != 1:
+                    sys.exit(f"{app}: {len(jobs)} jobs run its own suite through the family's gate, not one")
+                return jobs[0]
+
+
+            family = workflow(".github", "merge-gate.yml")
+            inputs = (family.get("on") or family[True])["workflow_call"]["inputs"]
+            defaults = {name: spec.get("default") for name, spec in inputs.items()}
+            apps = []
+            for app in os.environ["APPS"].split():
+                settings = {**defaults, **own_suite(app)}
+                worked_out_as_it_runs = sorted(key for key, value in settings.items() if EXPRESSION in str(value))
+                if worked_out_as_it_runs:
+                    sys.exit(f"{app}: its gate works out {', '.join(worked_out_as_it_runs)} as it runs, "
+                             "which cannot be read ahead of the run")
+                apps.append({**settings, "app": app, "check": app.replace("_", "-")})
+            print(json.dumps(apps))
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/reader"
+          "$RUNNER_TEMP/reader/bin/pip" install --quiet pyyaml==6.0.3
+          apps="$("$RUNNER_TEMP/reader/bin/python" -c "$READ")"
+          echo "apps=$apps" >> "$GITHUB_OUTPUT"
+
+  # Named for the app, so the checks a library's merge queue requires are
+  # `apps / fun-time / suite` and `apps / origenerator / suite`.
+  suite:
+    needs: settings
+    name: ${{ matrix.check }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.settings.outputs.apps) }}
     uses: haglio/.github/.github/workflows/merge-gate.yml@main
     with:
-      repo: origenerator
-      imports-only: true
-      siblings: ""
-      python-version: "3.14"
-      timeout-minutes: 15
-      qt-platform: offscreen
+      repo: ${{ matrix.app }}
+      imports: true
+      siblings: ${{ matrix.siblings }}
+      python-version: ${{ matrix.python-version }}
+      extras: ${{ matrix.extras }}
+      timeout-minutes: ${{ matrix.timeout-minutes }}
+      parts: ${{ matrix.parts }}
+      qt-platform: ${{ matrix.qt-platform }}
+      sdl-video: ${{ matrix.sdl-video }}
+      sdl-audio: ${{ matrix.sdl-audio }}
+      pip-extra: ${{ matrix.pip-extra }}
+      prepare: ${{ matrix.prepare }}
+      cache-path: ${{ matrix.cache-path }}
+      cache-key: ${{ matrix.cache-key }}

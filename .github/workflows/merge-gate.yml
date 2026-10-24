@@ -16,15 +16,14 @@ on:
           the ordinary case, where the repository being changed is the one under test.
         type: string
         default: ""
-      imports-only:
+      imports:
         description: >-
-          With `repo`, import every module of the packages the consumer ships, against this
-          repository's pull request, in place of running the consumer's suite: what keeps a
-          release here from leaving an app unable to start, for the price of an install,
-          where the app's whole suite is too slow to run on every pull request here. On
-          2026-10-14 a funestra release dropped two entries of a table Fun Time built its
-          commands from as it imported, and production Fun Time would not start; the only
-          consumer funestra's gate ran then was one whose repo held no code at all.
+          With `repo`, also import every module of the packages the consumer ships, against
+          this repository's pull request, before its suite runs: a module no test imports
+          can still stop an app starting. On 2026-10-14 a funestra release dropped two
+          entries of a table Fun Time built its commands from as it imported, and
+          production Fun Time would not start; the only consumer funestra's gate ran then
+          was one whose repo held no code at all.
         type: boolean
         default: false
       siblings:
@@ -49,14 +48,15 @@ on:
         default: 5
       parts:
         description: >-
-          How many parts the repository's own suite runs in, side by side, each in a job
-          of its own on this clock: for a suite that has outgrown one job's. Every part
-          collects the whole suite and runs the share the run's seed deals it, so the
-          parts run each test once between them and a test meets different neighbors
-          from run to run. Every part also repeats its share of the new and changed
-          tests, on what is left of its own clock, and a last job gives the verdict
-          under the name the queue requires: every part passed, and the coverage floor
-          holds over their measurements together. At most 8.
+          How many parts the suite runs in, side by side, each in a job of its own on this
+          clock: for a suite that has outgrown one job's. Every part collects the whole
+          suite and runs the share the run's seed deals it, so the parts run each test once
+          between them and a test meets different neighbors from run to run. Every part of
+          the repository's own suite also repeats its share of the new and changed tests,
+          on what is left of its own clock, and a last job gives the verdict under the name
+          the queue requires: every part passed, and the coverage floor holds over their
+          measurements together. A consumer's floor is its own gate's to hold, so for a
+          consumer the verdict is only that every part passed. At most 8.
         type: number
         default: 1
       qt-platform:
@@ -191,8 +191,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ${{ inputs.prepare }}
 
+      # From an installation of its own, as the repeats below are, so the sweep doing the
+      # importing is the version named here, whatever app_support the consumer and this
+      # repository pin. A suite run in parts sweeps once, in its first part.
+      - name: Import every module the consumer ships
+        if: inputs.imports && matrix.part == 1
+        working-directory: ${{ env.TARGET }}
+        env:
+          SWEEP: app-support @ git+https://github.com/haglio/app_support@v0.1.243
+        run: |
+          set -euo pipefail
+          suite_python="$(python -c 'import sys; print(sys.executable)')"
+          python -m venv "$RUNNER_TEMP/import-sweep"
+          sweep="$RUNNER_TEMP/import-sweep/Scripts/python.exe"
+          "$sweep" -m pip install --quiet "$SWEEP"
+          "$sweep" -m app_support.import_sweep --python "$suite_python" .
+
       - name: Run the suite in a random order
-        if: ${{ !inputs.imports-only && inputs.parts == 1 }}
+        if: inputs.parts == 1
         working-directory: ${{ env.TARGET }}
         env:
           SEED: ${{ github.run_id }}
@@ -214,11 +230,15 @@ jobs:
           dealt="--test-group-count=$PARTS --test-group=$PART --test-group-random-seed=$SEED"
           echo "Part $PART of $PARTS, dealt and shuffled with seed $SEED. To run it in this order: pip install pytest-random-order==1.2.0 pytest-test-groups==1.2.1, then python -m pytest --random-order-seed=$SEED $dealt --cov-fail-under=0"
           python -m pytest -q --random-order-seed="$SEED" $dealt --cov-fail-under=0
-          # Out of the checkout before the repeats below, whose own runs measure over it.
-          mv .coverage "$RUNNER_TEMP/coverage.part-$PART"
+
+      # Out of the checkout before the repeats below, whose own runs measure over it.
+      - name: Move this part's measurements out of the checkout
+        if: inputs.parts > 1 && inputs.repo == ''
+        working-directory: ${{ env.TARGET }}
+        run: mv .coverage "$RUNNER_TEMP/coverage.part-${{ matrix.part }}"
 
       - name: Keep this part's measurements for the verdict
-        if: inputs.parts > 1
+        if: inputs.parts > 1 && inputs.repo == ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-part-${{ matrix.part }}
@@ -227,22 +247,6 @@ jobs:
           retention-days: 1
           # A run attempted again keeps the artifacts of the attempt before it.
           overwrite: true
-
-      # From an installation of its own, as the repeats below are, so the sweep doing the
-      # importing is the version named here, whatever app_support the consumer and this
-      # repository pin.
-      - name: Import every module the consumer ships
-        if: inputs.imports-only
-        working-directory: ${{ env.TARGET }}
-        env:
-          SWEEP: app-support @ git+https://github.com/haglio/app_support@v0.1.243
-        run: |
-          set -euo pipefail
-          suite_python="$(python -c 'import sys; print(sys.executable)')"
-          python -m venv "$RUNNER_TEMP/import-sweep"
-          sweep="$RUNNER_TEMP/import-sweep/Scripts/python.exe"
-          "$sweep" -m pip install --quiet "$SWEEP"
-          "$sweep" -m app_support.import_sweep --python "$suite_python" .
 
       # A test that fails once in ten runs is flaky, and it is turned away here, by the
       # session that wrote it, instead of turning up red in someone else's run. The gate
@@ -284,7 +288,8 @@ jobs:
 
   # With `parts`, the check the merge queue requires. It runs however the parts ended,
   # since a job skipped here would count as passed, and fails unless every part passed
-  # and the coverage floor holds over all of their measurements together.
+  # and, for this repository's own suite, the coverage floor holds over all of their
+  # measurements together.
   verdict:
     name: ${{ inputs.parts > 1 && 'suite' || 'verdict' }}
     needs: suite
@@ -302,15 +307,18 @@ jobs:
           fi
 
       - name: Check out ${{ github.event.repository.name }}
+        if: inputs.repo == ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: ${{ github.event.repository.name }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: inputs.repo == ''
         with:
           python-version: ${{ inputs.python-version }}
 
       - name: Gather every part's measurements
+        if: inputs.repo == ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-part-*
@@ -318,6 +326,7 @@ jobs:
           merge-multiple: true
 
       - name: Hold the coverage floor over every part together
+        if: inputs.repo == ''
         working-directory: ${{ github.event.repository.name }}
         env:
           PARTS: ${{ inputs.parts }}
