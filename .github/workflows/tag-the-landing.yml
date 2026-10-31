@@ -77,6 +77,10 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Put retry on the PATH
+        if: env.APP_ID != ''
+        uses: haglio/.github/.github/actions/retry@main
+
       - name: Offer every repo the newest release of each library it pins
         if: env.APP_ID != ''
         env:
@@ -84,5 +88,5 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/newest-pins"
-          "$RUNNER_TEMP/newest-pins/bin/pip" install --quiet "$TOOL"
+          retry "$RUNNER_TEMP/newest-pins/bin/pip" install --quiet "$TOOL"
           "$RUNNER_TEMP/newest-pins/bin/python" -m app_support.newest_pins --org haglio

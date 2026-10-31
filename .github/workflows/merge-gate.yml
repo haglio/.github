@@ -84,7 +84,10 @@ on:
         type: string
         default: ""
       prepare:
-        description: A bash script run in the repo after the install and before the suite.
+        description: >-
+          A bash script run in the repo after the install and before the suite, with
+          `retry` (haglio/.github's .github/actions/retry) on its PATH for its fetches
+          from GitHub.
         type: string
         default: ""
       cache-path:
@@ -126,6 +129,9 @@ jobs:
       - name: Start this job's clock
         run: echo "JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
 
+      - name: Put retry on the PATH
+        uses: haglio/.github/.github/actions/retry@main
+
       - name: Check out ${{ github.event.repository.name }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -135,14 +141,14 @@ jobs:
 
       - name: Clone the consumer whose suite runs
         if: inputs.repo != ''
-        run: git clone --quiet --depth 1 "https://github.com/haglio/${{ inputs.repo }}.git" "${{ inputs.repo }}"
+        run: retry git clone --quiet --depth 1 "https://github.com/haglio/${{ inputs.repo }}.git" "${{ inputs.repo }}"
 
       - name: Clone the siblings beside it
         if: inputs.siblings != ''
         run: |
           set -euo pipefail
           for repo in ${{ inputs.siblings }}; do
-            git clone --quiet --depth 1 "https://github.com/haglio/$repo.git" "$repo"
+            retry git clone --quiet --depth 1 "https://github.com/haglio/$repo.git" "$repo"
           done
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -165,7 +171,7 @@ jobs:
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/taken-out"
           check="$RUNNER_TEMP/taken-out/Scripts/python.exe"
-          "$check" -m pip install --quiet "$CHECK"
+          retry "$check" -m pip install --quiet "$CHECK"
           "$check" -m app_support.taken_out --base "$BASE" --repo "$CANDIDATE"
 
       - name: Say how the suite renders
@@ -176,23 +182,25 @@ jobs:
           [ -n "${{ inputs.sdl-audio }}" ] && echo "SDL_AUDIODRIVER=${{ inputs.sdl-audio }}" >> "$GITHUB_ENV"
           true
 
+      # pip tries a package index again by itself but a git requirement only once, so every
+      # install here that can clone one goes through retry.
       - name: Install the siblings, then the repo (editable, compat mode)
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          if [ -n "${{ inputs.pip-extra }}" ]; then pip install ${{ inputs.pip-extra }}; fi
+          if [ -n "${{ inputs.pip-extra }}" ]; then retry pip install ${{ inputs.pip-extra }}; fi
           for repo in ${{ inputs.siblings }}; do
-            pip install -e "./$repo" --config-settings editable_mode=compat
+            retry pip install -e "./$repo" --config-settings editable_mode=compat
           done
           if [ "$TARGET" = "$CANDIDATE" ]; then
-            pip install -e "./$CANDIDATE[${{ inputs.extras }}]" --config-settings editable_mode=compat
+            retry pip install -e "./$CANDIDATE[${{ inputs.extras }}]" --config-settings editable_mode=compat
           else
             # The consumer first, the candidate last. A consumer that pins this
             # repo at a tag would otherwise replace the candidate with that tag
             # as it installed, and its suite would pass against the copy it
             # already had -- a reverse gate that can no longer fail.
-            pip install -e "./$TARGET[${{ inputs.extras }}]" --config-settings editable_mode=compat
-            pip install -e "./$CANDIDATE" --config-settings editable_mode=compat
+            retry pip install -e "./$TARGET[${{ inputs.extras }}]" --config-settings editable_mode=compat
+            retry pip install -e "./$CANDIDATE" --config-settings editable_mode=compat
             # Then the siblings the candidate is built against, at its own tags, over the
             # consumer's: what the consumer runs once it takes this release, since the
             # newest-pins pull request moves every pin it holds at once. A library names
@@ -202,7 +210,7 @@ jobs:
             python -c "import sys; from app_support.dependencies import sibling_pins_in; print('\n'.join(pin.spec for pin in sibling_pins_in(open(sys.argv[1], encoding='utf-8').read())))" \
               "./$CANDIDATE/pyproject.toml" > "$RUNNER_TEMP/candidate-siblings.txt"
             if [ -s "$RUNNER_TEMP/candidate-siblings.txt" ]; then
-              pip install -r "$RUNNER_TEMP/candidate-siblings.txt"
+              retry pip install -r "$RUNNER_TEMP/candidate-siblings.txt"
             fi
           fi
 
@@ -240,7 +248,7 @@ jobs:
           suite_python="$(python -c 'import sys; print(sys.executable)')"
           python -m venv "$RUNNER_TEMP/import-sweep"
           sweep="$RUNNER_TEMP/import-sweep/Scripts/python.exe"
-          "$sweep" -m pip install --quiet "$SWEEP"
+          retry "$sweep" -m pip install --quiet "$SWEEP"
           "$sweep" -m app_support.import_sweep --python "$suite_python" .
 
       - name: Run the suite in a random order
@@ -304,7 +312,7 @@ jobs:
           suite_python="$(python -c 'import sys; print(sys.executable)')"
           python -m venv "$RUNNER_TEMP/flake-gate"
           gate="$RUNNER_TEMP/flake-gate/Scripts/python.exe"
-          "$gate" -m pip install --quiet "$GATE"
+          retry "$gate" -m pip install --quiet "$GATE"
           # What is left of the job's clock, less a minute for the steps after this
           # one. Running past that clock cancels the job, and a cancelled job reports
           # nothing at all -- no pass, no fail, no list of what it got through -- and
