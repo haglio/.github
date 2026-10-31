@@ -1,5 +1,6 @@
 # Tags every landing on main, so a consumer can name the copy of a shared package it
-# was built against. Called by a shared repo's own merge-gate.yml on `push` to main.
+# was built against, then offers every repo that pins one the newest release. Called by a
+# shared repo's own merge-gate.yml on `push` to main.
 #
 # The tag IS the version: those repos read theirs with setuptools-scm, which takes it
 # from `git describe`, so `pip install "<name> @ git+<repo>@<tag>"` reports that tag
@@ -41,3 +42,47 @@ jobs:
           git tag "$tag"
           git push origin "$tag"
           echo "::notice::tagged $tag"
+
+  # Then every repo of the family that pins a library at a tag older than its newest
+  # release gets one pull request taking the newest of each, opened or brought up to
+  # date here, which ships by itself once that repo's checks pass. Until 2026-10-30 a
+  # session moved each pin by hand: 28 of funestra's 213 landings from 2026-09-21 to
+  # 2026-10-13 did nothing else, and a helper built in app_support reached an app only
+  # after three libraries had each released again. The pull request is opened as the
+  # auto-merge App, the only identity here that can write to the other repos and whose
+  # pull requests start their checks; a caller passes its secrets with `secrets: inherit`.
+  newest-pins:
+    needs: tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      APP_ID: ${{ secrets.AUTOMERGE_APP_ID }}
+      TOOL: app-support @ git+https://github.com/haglio/app_support@v0.1.314
+    steps:
+      - name: Say so when the caller passed no secrets
+        if: env.APP_ID == ''
+        run: echo "::warning::no AUTOMERGE_APP_ID reached this workflow, so no repo was offered the newest release; call it with secrets inherit"
+
+      - name: Mint a token from the auto-merge App, for every repo it is installed on
+        if: env.APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.AUTOMERGE_APP_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_KEY }}
+          owner: haglio
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: env.APP_ID != ''
+        with:
+          python-version: "3.14"
+
+      - name: Offer every repo the newest release of each library it pins
+        if: env.APP_ID != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/newest-pins"
+          "$RUNNER_TEMP/newest-pins/bin/pip" install --quiet "$TOOL"
+          "$RUNNER_TEMP/newest-pins/bin/python" -m app_support.newest_pins --org haglio

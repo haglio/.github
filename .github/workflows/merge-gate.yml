@@ -26,6 +26,14 @@ on:
           was one whose repo held no code at all.
         type: boolean
         default: false
+      keeps-what-others-use:
+        description: >-
+          For a library, before its own suite: refuse a pull request that takes out a module
+          or a name that another repo's main or open pull request still uses. A branch that
+          still uses one stops at its first import once its app takes the release that took
+          it out: 29 of the red merge-gate runs read across the family on 2026-10-13 were that.
+        type: boolean
+        default: false
       siblings:
         description: >-
           The repos cloned beside the one under test and installed editable first, in
@@ -142,6 +150,23 @@ jobs:
           python-version: ${{ inputs.python-version }}
           cache: pip
           cache-dependency-path: "**/pyproject.toml"
+
+      # From an installation of its own, as the import sweep and the repeats below are, so
+      # the check doing the refusing is the version named here. It reads every other repo's
+      # main and open pull requests from GitHub, so it runs before anything is installed.
+      - name: Refuse to take out what another repo's open work still uses
+        if: inputs.keeps-what-others-use && inputs.repo == '' && github.event_name != 'push' && matrix.part == 1
+        working-directory: ${{ github.event.repository.name }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          CHECK: app-support @ git+https://github.com/haglio/app_support@v0.1.314
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/taken-out"
+          check="$RUNNER_TEMP/taken-out/Scripts/python.exe"
+          "$check" -m pip install --quiet "$CHECK"
+          "$check" -m app_support.taken_out --base "$BASE" --repo "$CANDIDATE"
 
       - name: Say how the suite renders
         run: |
