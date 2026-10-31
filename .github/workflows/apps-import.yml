@@ -31,6 +31,9 @@ jobs:
     outputs:
       apps: ${{ steps.read.outputs.apps }}
     steps:
+      - name: Put retry on the PATH
+        uses: haglio/.github/.github/actions/retry@main
+
       - name: Read each app's suite from its own merge gate
         id: read
         env:
@@ -82,7 +85,7 @@ jobs:
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/reader"
           "$RUNNER_TEMP/reader/bin/pip" install --quiet pyyaml==6.0.3
-          apps="$("$RUNNER_TEMP/reader/bin/python" -c "$READ")"
+          apps="$(retry "$RUNNER_TEMP/reader/bin/python" -c "$READ")"
           echo "apps=$apps" >> "$GITHUB_OUTPUT"
 
   # Named for the app, so the checks a library's merge queue requires are
