@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: retry <command> [<argument>...]" >&2
+  exit 2
+fi
+
+tries="${RETRY_TRIES:-4}"
+pause="${RETRY_PAUSE:-15}"
+try=1
+until "$@"; do
+  status=$?
+  if [ "$try" -ge "$tries" ]; then
+    echo "retry: $* failed on all $tries tries" >&2
+    exit "$status"
+  fi
+  echo "::warning::$* failed with exit status $status on try $try of $tries; trying again in ${pause}s" >&2
+  sleep "$pause"
+  pause=$((pause * 2))
+  try=$((try + 1))
+done

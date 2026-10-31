@@ -1,0 +1,14 @@
+# A connection GitHub drops fails the command that was fetching over it, and pip and git
+# try a fetch from GitHub only once, so every gate's fetches from GitHub go through this.
+name: retry
+description: >-
+  Puts `retry` on the PATH of the job's later steps. `retry <command>` runs the command,
+  and while it fails runs it again, four tries in all, with a pause before each try after
+  the first that starts at 15 seconds and doubles; it ends with the command's own exit
+  status from the last try. RETRY_TRIES and RETRY_PAUSE set the tries and the first pause.
+runs:
+  using: composite
+  steps:
+    - name: Put retry on the PATH
+      shell: bash
+      run: echo "$GITHUB_ACTION_PATH" >> "$GITHUB_PATH"

@@ -1,0 +1,2 @@
+# A script bash runs on a Windows runner, whose git otherwise checks it out with CRLF.
+.github/actions/retry/retry text eol=lf
