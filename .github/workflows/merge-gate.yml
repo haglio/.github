@@ -193,6 +193,17 @@ jobs:
             # already had -- a reverse gate that can no longer fail.
             pip install -e "./$TARGET[${{ inputs.extras }}]" --config-settings editable_mode=compat
             pip install -e "./$CANDIDATE" --config-settings editable_mode=compat
+            # Then the siblings the candidate is built against, at its own tags, over the
+            # consumer's: what the consumer runs once it takes this release, since the
+            # newest-pins pull request moves every pin it holds at once. A library names
+            # them in its dev extra, which installing it never reads, so without this the
+            # candidate met the consumer's older copies: funestra#320 found shared_ui
+            # v0.1.277 under code that needs v0.1.279.
+            python -c "import sys; from app_support.dependencies import sibling_pins_in; print('\n'.join(pin.spec for pin in sibling_pins_in(open(sys.argv[1], encoding='utf-8').read())))" \
+              "./$CANDIDATE/pyproject.toml" > "$RUNNER_TEMP/candidate-siblings.txt"
+            if [ -s "$RUNNER_TEMP/candidate-siblings.txt" ]; then
+              pip install -r "$RUNNER_TEMP/candidate-siblings.txt"
+            fi
           fi
 
       - name: Install the plugin that shuffles the suite
