@@ -165,7 +165,7 @@ jobs:
         working-directory: ${{ github.event.repository.name }}
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          CHECK: app-support @ git+https://github.com/haglio/app_support@v0.1.314
+          CHECK: app-support @ git+https://github.com/haglio/app_support@v0.1.336
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
