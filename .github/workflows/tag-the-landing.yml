@@ -57,7 +57,7 @@ jobs:
     timeout-minutes: 10
     env:
       APP_ID: ${{ secrets.AUTOMERGE_APP_ID }}
-      TOOL: app-support @ git+https://github.com/haglio/app_support@v0.1.314
+      TOOL: app-support @ git+https://github.com/haglio/app_support@v0.1.344
     steps:
       - name: Say so when the caller passed no secrets
         if: env.APP_ID == ''
