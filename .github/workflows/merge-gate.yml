@@ -108,6 +108,12 @@ defaults:
 jobs:
   # The whole suite, under the name the merge queue requires -- or with `parts`, one part
   # of it, and the verdict below takes that name.
+  #
+  # A push to main runs this job as far as the installs and no further. What was pushed is
+  # the commit the merge queue just passed, so nothing is tested again; but a cache saved
+  # on main is the only one every pull request and queue run can restore, since each of
+  # those saves only for itself, and without it an install took shared_ui 388 seconds
+  # instead of 69, past that repo's whole clock (measured 2026-11-03).
   suite:
     name: ${{ inputs.parts > 1 && format('part {0} of {1}', matrix.part, inputs.parts) || 'suite' }}
     runs-on: windows-latest
@@ -117,8 +123,9 @@ jobs:
       # failing tests rather than one part's.
       fail-fast: false
       matrix:
-        # Looked up by the number of parts: GitHub's expressions cannot count.
-        part: ${{ fromJSON('[[], [1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6, 7, 8]]')[inputs.parts] }}
+        # Looked up by the number of parts: GitHub's expressions cannot count. One job fills
+        # the cache on a push, however many parts the suite runs in.
+        part: ${{ fromJSON('[[], [1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6, 7, 8]]')[github.event_name == 'push' && 1 || inputs.parts] }}
     env:
       # The repo whose suite runs: this one, or the consumer it is being tested through.
       TARGET: ${{ inputs.repo != '' && inputs.repo || github.event.repository.name }}
@@ -239,7 +246,7 @@ jobs:
       # importing is the version named here, whatever app_support the consumer and this
       # repository pin. A suite run in parts sweeps once, in its first part.
       - name: Import every module the consumer ships
-        if: inputs.imports && matrix.part == 1
+        if: inputs.imports && github.event_name != 'push' && matrix.part == 1
         working-directory: ${{ env.TARGET }}
         env:
           SWEEP: app-support @ git+https://github.com/haglio/app_support@v0.1.243
@@ -252,7 +259,7 @@ jobs:
           "$sweep" -m app_support.import_sweep --python "$suite_python" .
 
       - name: Run the suite in a random order
-        if: inputs.parts == 1
+        if: inputs.parts == 1 && github.event_name != 'push'
         working-directory: ${{ env.TARGET }}
         env:
           SEED: ${{ github.run_id }}
@@ -263,7 +270,7 @@ jobs:
       # A part measures only the code its own share of the tests reaches, so it holds no
       # floor of its own: the verdict holds the repo's over every part's measurements.
       - name: Run part ${{ matrix.part }} of the suite in a random order
-        if: inputs.parts > 1
+        if: inputs.parts > 1 && github.event_name != 'push'
         working-directory: ${{ env.TARGET }}
         env:
           SEED: ${{ github.run_id }}
@@ -277,12 +284,12 @@ jobs:
 
       # Out of the checkout before the repeats below, whose own runs measure over it.
       - name: Move this part's measurements out of the checkout
-        if: inputs.parts > 1 && inputs.repo == ''
+        if: inputs.parts > 1 && inputs.repo == '' && github.event_name != 'push'
         working-directory: ${{ env.TARGET }}
         run: mv .coverage "$RUNNER_TEMP/coverage.part-${{ matrix.part }}"
 
       - name: Keep this part's measurements for the verdict
-        if: inputs.parts > 1 && inputs.repo == ''
+        if: inputs.parts > 1 && inputs.repo == '' && github.event_name != 'push'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-part-${{ matrix.part }}
@@ -337,7 +344,7 @@ jobs:
   verdict:
     name: ${{ inputs.parts > 1 && 'suite' || 'verdict' }}
     needs: suite
-    if: always() && inputs.parts > 1
+    if: always() && inputs.parts > 1 && github.event_name != 'push'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:

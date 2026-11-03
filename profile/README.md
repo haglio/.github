@@ -16,5 +16,8 @@ ten more times, on a runner kept busy, and fails the check if any run fails
 (`python -m app_support.flake_gate`). It repeats only what the repo's suite collects, so a tree the
 suite leaves out, such as `fun_time`'s hidden-desktop tests, is left out here too.
 
+A push to `main` runs no tests: it is the commit the queue just passed. It installs, which fills the
+pip cache every pull request and queue run restores from `main`, and a shared library then tags it.
+
 Changes to this repository land the way every other repo's do: a pull request is queued the moment it
 opens (unless it is a draft) and merges once `actionlint` has read every workflow here without an error.
