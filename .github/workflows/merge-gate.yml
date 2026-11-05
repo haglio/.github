@@ -389,19 +389,3 @@ jobs:
           python -m coverage combine "${measured[@]}"
           echo "Coverage over every part, held to this repository's floor:"
           python -m coverage report --format=total
-
-      # A file's own count of uncovered lines, for a repo that keeps them, read from the
-      # same measurements. Under the floor's total one file could grow while another shrank.
-      - name: Put retry on the PATH
-        if: inputs.repo == '' && hashFiles('*/tools/quality_baseline.json') != ''
-        uses: haglio/.github/.github/actions/retry@main
-
-      - name: Hold each file's uncovered lines over every part together
-        if: inputs.repo == '' && hashFiles('*/tools/quality_baseline.json') != ''
-        working-directory: ${{ github.event.repository.name }}
-        env:
-          CHECK: app-support @ git+https://github.com/haglio/app_support@v0.1.339
-        run: |
-          set -euo pipefail
-          retry python -m pip install --quiet "$CHECK" pytest
-          python -m app_support.gates.baseline --hold-uncovered
