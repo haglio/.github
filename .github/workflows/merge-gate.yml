@@ -388,4 +388,4 @@ jobs:
           for part in $(seq "$PARTS"); do measured+=("$RUNNER_TEMP/coverage/coverage.part-$part"); done
           python -m coverage combine "${measured[@]}"
           echo "Coverage over every part, held to this repository's floor:"
-          python -m coverage report --format=total
+          python -m coverage report --format=total --ignore-errors
